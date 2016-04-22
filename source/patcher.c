@@ -116,11 +116,11 @@ static u32 secureInfoExists(void)
 }
 
 static unsigned int config_ver = 4;
-struct config_file config;
-int patches_modified = 0;
+static struct config_file config;
+static int failed_load_config = 1;
 void load_config() {
     // Make sure we don't get random values if the config file doesn't load
-    memset(&config, 0, sizeof(struct config_file));
+	for(int i=0;i<sizeof(struct config_file);i++) ((char*)&config)[i]=0;
 
 	IFile file;
     u64 total;
@@ -128,25 +128,26 @@ void load_config() {
 	// Open file.
     if (!fileOpen(&file, ARCHIVE_SDMC, "/cakes/config.dat", FS_OPEN_READ)) {
 		// Failed to open.
-        patches_modified = 1;
+		failed_load_config = 1;
         return;
     }
 
 	// Read file.
     if(!IFile_Read(&file, &total, &config, sizeof(struct config_file))) {
 		// Failed to read.
-        memset(&config, 0, sizeof(struct config_file));
-		patches_modified = 1;
+		failed_load_config = 1;
+		for(int i=0;i<sizeof(struct config_file);i++) ((char*)&config)[i]=0;
 		return;
 	}
 
     if (config.config_ver != config_ver) {
 		// Invalid version.
-        memset(&config, 0, sizeof(struct config_file));
-        patches_modified = 1;
+		failed_load_config = 1;
+		for(int i=0;i<sizeof(struct config_file);i++) ((char*)&config)[i]=0;
         return;
     }
 
+	IFile_Close(&file);
 	// Loaded okay.
 }
 
@@ -317,7 +318,7 @@ static void patchCfgGetRegion(u8 *code, u32 size, u8 regionId, u32 CFGUHandleOff
 
 void patchCode(u64 progId, u8 *code, u32 size)
 {
-    load_config(); // Load cakes.dat
+//    load_config(); // Load cakes.dat
 
     switch(progId)
     {
@@ -435,24 +436,27 @@ void patchCode(u64 progId, u8 *code, u32 size)
                 sizeof(stopCartUpdatesPatch), 2
             );
 
-            u32 cpuSetting = (config.n3ds_clock & 0x01) | ((config.n3ds_l2 << 1) & 0x01);
+			if (!failed_load_config) {
+	            u32 cpuSetting = 0;
+				cpuSetting += config.n3ds_clock ? 0x1 : 0x0;
+				cpuSetting += config.n3ds_l2    ? 0x2 : 0x0;
 
-            if(cpuSetting)
-            {
-                static const u8 cfgN3dsCpuPattern[] = {
-                    0x00, 0x40, 0xA0, 0xE1, 0x07, 0x00
-                };
+	            if(cpuSetting)
+    	        {
+        	        static const u8 cfgN3dsCpuPattern[] = {
+            	        0x00, 0x40, 0xA0, 0xE1, 0x07, 0x00
+                	};
 
-                u32 *cfgN3dsCpuLoc = (u32 *)memsearch(code, cfgN3dsCpuPattern, size, sizeof(cfgN3dsCpuPattern));
+	                u32 *cfgN3dsCpuLoc = (u32 *)memsearch(code, cfgN3dsCpuPattern, size, sizeof(cfgN3dsCpuPattern));
 
-                //Patch N3DS CPU Clock and L2 cache setting
-                if(cfgN3dsCpuLoc != NULL)
-                {
-                    *(cfgN3dsCpuLoc + 1) = 0xE1A00000;
-                    *(cfgN3dsCpuLoc + 8) = 0xE3A00000 | cpuSetting;
-                }
-            }
-
+    	            //Patch N3DS CPU Clock and L2 cache setting
+        	        if(cfgN3dsCpuLoc != NULL)
+            	    {
+                	    *(cfgN3dsCpuLoc + 1) = 0xE1A00000;
+                    	*(cfgN3dsCpuLoc + 8) = 0xE3A00000 | cpuSetting;
+                	}
+            	}
+			}
             break;
         }
 
@@ -490,9 +494,9 @@ void patchCode(u64 progId, u8 *code, u32 size)
 
             break;
         }
-
         default:
-            if(config.language_emu)
+		{
+            if(!failed_load_config && config.language_emu)
             {
                 u32 tidHigh = (progId & 0xFFFFFFF000000000LL) >> 0x24;
 
@@ -510,11 +514,14 @@ void patchCode(u64 progId, u8 *code, u32 size)
 
                         if(CFGU_GetConfigInfoBlk2_endPos != NULL)
                         {
-                            if(languageId != 0xFF) patchCfgGetLanguage(code, size, languageId, CFGU_GetConfigInfoBlk2_endPos);
-                            if(regionId != 0xFF) patchCfgGetRegion(code, size, regionId, CFGUHandleOffset);
+                            if(languageId != 0xFF)
+                                patchCfgGetLanguage(code, size, languageId, CFGU_GetConfigInfoBlk2_endPos);
+                            if(regionId != 0xFF)
+                                patchCfgGetRegion(code, size, regionId, CFGUHandleOffset);
                         }
                     }
                 }
+            }
 
             break;
         }

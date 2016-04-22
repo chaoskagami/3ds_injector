@@ -8,3 +8,4 @@ void memcpy(void *dest, const void *src, u32 size)
     for(u32 i = 0; i < size; i++)
         destc[i] = srcc[i];
 }
+
